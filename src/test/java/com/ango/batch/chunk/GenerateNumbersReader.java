@@ -40,7 +40,9 @@ public class GenerateNumbersReader implements IReader<Integer>, IResource
         {
             throw new RuntimeException("Error reading element [" + idx + "]");
         }
-        return (idx > max) ? null : idx;
+        Integer number =  (idx > max) ? null : idx;
+        LOGGER.info("Reading number {}", number);
+        return number;
     }
 
     @Override

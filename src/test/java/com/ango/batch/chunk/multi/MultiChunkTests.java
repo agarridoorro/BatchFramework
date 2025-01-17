@@ -23,7 +23,7 @@ public class MultiChunkTests
 
         IStep chunkStep = IMultiChunkStepBuilder.<Integer, String>instance()
                 .setName("ExactStep")
-                .setThreads(2)
+                .setConsumers(2)
                 .setCommitInterval(5)
                 .setThrowExceptions(true)
                 //Producer
@@ -58,7 +58,7 @@ public class MultiChunkTests
 
         IStep chunkStep = IMultiChunkStepBuilder.<Integer, String>instance()
                 .setName("NoExactStep")
-                .setThreads(2)
+                .setConsumers(2)
                 .setCommitInterval(5)
                 .setThrowExceptions(true)
                 //Producer
@@ -89,7 +89,7 @@ public class MultiChunkTests
 
         chunkStep = IMultiChunkStepBuilder.<Integer, String>instance()
                 .setName("NoExactStep")
-                .setThreads(2)
+                .setConsumers(2)
                 .setCommitInterval(5)
                 .setThrowExceptions(true)
                 //Producer
@@ -124,7 +124,7 @@ public class MultiChunkTests
 
         IStep chunkStep = IMultiChunkStepBuilder.<Integer, String>instance()
                 .setName("Error")
-                .setThreads(2)
+                .setConsumers(2)
                 .setCommitInterval(5)
                 .setThrowExceptions(false)
                 //Producer
@@ -146,7 +146,7 @@ public class MultiChunkTests
         assertEquals(0, status.read());
         assertEquals(0, status.skipped());
         assertEquals(0, status.written());
-        assertEquals(1, status.exceptions().size());
+        assertEquals(2, status.exceptions().size());
         assertTrue((status.endTime() - status.initTime()) > status.lastElapsed());
         assertEquals(0, status.committed());
 
@@ -155,7 +155,7 @@ public class MultiChunkTests
 
         chunkStep = IMultiChunkStepBuilder.<Integer, String>instance()
                 .setName("Error")
-                .setThreads(2)
+                .setConsumers(2)
                 .setCommitInterval(5)
                 .setThrowExceptions(false)
                 //Producer
@@ -177,7 +177,7 @@ public class MultiChunkTests
         assertEquals(10, status.read());
         assertEquals(3, status.skipped());
         assertEquals(7, status.written());
-        assertEquals(1, status.exceptions().size());
+        assertEquals(2, status.exceptions().size());
         assertTrue((status.endTime() - status.initTime()) > status.lastElapsed());
         assertEquals(2, status.committed());
     }
@@ -190,7 +190,7 @@ public class MultiChunkTests
 
         IStep chunkStep = IMultiChunkStepBuilder.<Integer, String>instance()
                 .setName("processErrorConsumer2")
-                .setThreads(2)
+                .setConsumers(2)
                 .setCommitInterval(5)
                 .setThrowExceptions(false)
                 //Producer
@@ -209,7 +209,7 @@ public class MultiChunkTests
         assertTrue(status.initTime() >= now);
         assertTrue(status.endTime() > status.initTime());
         assertEquals(StepState.Failed, status.state());
-        assertEquals(10, status.read());
+        assertTrue(status.read() >= 10);
         assertEquals(1, status.skipped());
         assertEquals(4, status.written());
         assertEquals(2, status.exceptions().size());
@@ -225,7 +225,7 @@ public class MultiChunkTests
 
         IStep chunkStep = IMultiChunkStepBuilder.<Integer, String>instance()
                 .setName("processErrorConsumer2")
-                .setThreads(2)
+                .setConsumers(2)
                 .setCommitInterval(5)
                 .setThrowExceptions(false)
                 //Producer
@@ -244,7 +244,7 @@ public class MultiChunkTests
         assertTrue(status.initTime() >= now);
         assertTrue(status.endTime() > status.initTime());
         assertEquals(StepState.Failed, status.state());
-        assertEquals(10, status.read());
+        assertTrue(status.read() >= 10);
         assertEquals(0, status.skipped());
         assertEquals(0, status.written());
         assertEquals(2, status.exceptions().size());
@@ -260,9 +260,9 @@ public class MultiChunkTests
 
         IStep chunkStep = IMultiChunkStepBuilder.<Integer, String>instance()
                 .setName("errorTimeout")
-                .setThreads(2)
+                .setConsumers(2)
                 .setCommitInterval(5)
-                .setTimeoutForConsumers(1)
+                .setWaitTimeout(1)
                 .setThrowExceptions(false)
                 //Producer
                 .setReader(new GenerateNumbersReader().setMax(20))
@@ -280,7 +280,7 @@ public class MultiChunkTests
         assertTrue(status.initTime() >= now);
         assertTrue(status.endTime() > status.initTime());
         assertEquals(StepState.Failed, status.state());
-        assertEquals(10, status.read());
+        assertTrue(status.read() >= 10);
         assertEquals(0, status.skipped());
         assertEquals(0, status.written());
         assertTrue(status.exceptions().size() >= 2);
@@ -296,7 +296,7 @@ public class MultiChunkTests
 
         IStep chunkStep = IMultiChunkStepBuilder.<Integer, String>instance()
                 .setName("error")
-                .setThreads(2)
+                .setConsumers(2)
                 .setCommitInterval(5)
                 .setThrowExceptions(false)
                 .setTransactionManager(new ErrorTransactionManager().setWaitDuration(1000).setWaitThread("consumer-1").setBeginsToFail(1))
@@ -315,7 +315,7 @@ public class MultiChunkTests
         assertTrue(status.initTime() >= now);
         assertTrue(status.endTime() > status.initTime());
         assertEquals(StepState.Failed, status.state());
-        assertEquals(10, status.read());
+        assertTrue(status.read() >= 10);
         assertEquals(0, status.skipped());
         assertEquals(0, status.written());
         assertEquals(2, status.exceptions().size());
@@ -327,7 +327,7 @@ public class MultiChunkTests
 
         chunkStep = IMultiChunkStepBuilder.<Integer, String>instance()
                 .setName("error")
-                .setThreads(2)
+                .setConsumers(2)
                 .setCommitInterval(5)
                 .setThrowExceptions(false)
                 .setTransactionManager(new ErrorTransactionManager().setWaitDuration(1000).setWaitThread("consumer-0").setBeginsToFail(1))
@@ -346,7 +346,7 @@ public class MultiChunkTests
         assertTrue(status.initTime() >= now);
         assertTrue(status.endTime() > status.initTime());
         assertEquals(StepState.Failed, status.state());
-        assertEquals(10, status.read());
+        assertTrue(status.read() >= 10);
         assertEquals(1, status.skipped());
         assertEquals(4, status.written());
         assertEquals(2, status.exceptions().size());
@@ -362,7 +362,7 @@ public class MultiChunkTests
 
         IStep chunkStep = IMultiChunkStepBuilder.<Integer, String>instance()
                 .setName("error")
-                .setThreads(2)
+                .setConsumers(2)
                 .setCommitInterval(5)
                 .setThrowExceptions(false)
                 .setTransactionManager(new ErrorTransactionManager().setCommitsToFail(1))
@@ -381,7 +381,7 @@ public class MultiChunkTests
         assertTrue(status.initTime() >= now);
         assertTrue(status.endTime() > status.initTime());
         assertEquals(StepState.Failed, status.state());
-        assertEquals(10, status.read());
+        assertTrue(status.read() >= 10);
         assertEquals(0, status.skipped());
         assertEquals(0, status.written());
         assertEquals(2, status.exceptions().size());
@@ -393,7 +393,7 @@ public class MultiChunkTests
 
         chunkStep = IMultiChunkStepBuilder.<Integer, String>instance()
                 .setName("error")
-                .setThreads(2)
+                .setConsumers(2)
                 .setCommitInterval(5)
                 .setThrowExceptions(false)
                 .setTransactionManager(new ErrorTransactionManager().setCommitsToFail(2))
@@ -412,7 +412,7 @@ public class MultiChunkTests
         assertTrue(status.initTime() >= now);
         assertTrue(status.endTime() > status.initTime());
         assertEquals(StepState.Failed, status.state());
-        assertEquals(10, status.read());
+        assertTrue(status.read() >= 10);
         assertEquals(1, status.skipped());
         assertEquals(4, status.written());
         assertEquals(2, status.exceptions().size());
@@ -428,7 +428,7 @@ public class MultiChunkTests
 
         IStep chunkStep = IMultiChunkStepBuilder.<Integer, String>instance()
                 .setName("error")
-                .setThreads(2)
+                .setConsumers(2)
                 .setCommitInterval(5)
                 .setThrowExceptions(false)
                 .setTransactionManager(new ErrorTransactionManager().setRollbacksToFail(1))
@@ -447,7 +447,7 @@ public class MultiChunkTests
         assertTrue(status.initTime() >= now);
         assertTrue(status.endTime() > status.initTime());
         assertEquals(StepState.Failed, status.state());
-        assertEquals(10, status.read());
+        assertTrue(status.read() >= 10);
         assertEquals(0, status.skipped());
         assertEquals(0, status.written());
         assertEquals(3, status.exceptions().size());
@@ -459,7 +459,7 @@ public class MultiChunkTests
 
         chunkStep = IMultiChunkStepBuilder.<Integer, String>instance()
                 .setName("error")
-                .setThreads(2)
+                .setConsumers(2)
                 .setCommitInterval(5)
                 .setThrowExceptions(false)
                 .setTransactionManager(new ErrorTransactionManager().setRollbacksToFail(1))
@@ -478,7 +478,7 @@ public class MultiChunkTests
         assertTrue(status.initTime() >= now);
         assertTrue(status.endTime() > status.initTime());
         assertEquals(StepState.Failed, status.state());
-        assertEquals(10, status.read());
+        assertTrue(status.read() >= 10);
         assertEquals(1, status.skipped());
         assertEquals(4, status.written());
         assertEquals(3, status.exceptions().size());

@@ -26,13 +26,15 @@ public class MultiChunkStep <T,K> extends CommonStep<MultiChunkStatus> implement
 
     private final List<WriterResource<K>> writers = new LinkedList<>();
 
-    private final List<SharedData<T>> dataForThreads = new ArrayList<>();
+    private final List<ConsumerData<T>> exchangeConsumersData = new ArrayList<>();
 
-    private int threads;
+    private ProducerData<T> exchangeProducerData;
+
+    private int consumers;
 
     private int commitInterval;
 
-    private int timeoutForConsumers;
+    private int waitTimeout;
 
     public MultiChunkStep()
     {
@@ -58,11 +60,11 @@ public class MultiChunkStep <T,K> extends CommonStep<MultiChunkStatus> implement
         this.commitInterval = interval;
     }
 
-    public void setTimeoutForConsumers(int timeout) { this.timeoutForConsumers = timeout; }
+    public void setWaitTimeout(int timeout) { this.waitTimeout = timeout; }
 
-    public void setThreads(int threads)
+    public void setConsumers(int consumers)
     {
-        this.threads = threads;
+        this.consumers = consumers;
     }
 
     @Override
@@ -83,73 +85,74 @@ public class MultiChunkStep <T,K> extends CommonStep<MultiChunkStatus> implement
     {
         try
         {
-            final int maxItemsToRead = commitInterval * threads;
+            final int maxItemsToRead = commitInterval * consumers;
 
             status().start();
             status().save();
 
             openResources();
-            startThreads();
+            startConsumers();
+            startProducer();
 
-            boolean isError = false;
+            exchangeProducerData.orchestratorActions().startRead();
+
+            boolean isErrorInProducer;
+            boolean isErrorInConsumers = false;
             while (true)
             {
                 status().startChunk();
 
-                final List<T> readItems = reader.read(maxItemsToRead);
-                final int read = readItems.size();
-                status().read(read);
-
-                if (read == 0)
+                exchangeProducerData.orchestratorActions().waitForData();
+                isErrorInProducer = exchangeProducerData.orchestratorActions().isError();
+                final int read = exchangeProducerData.orchestratorActions().read();
+                if (read == 0 || isErrorInProducer)
                 {
-                    stopThreads();
+                    stopProducer();
+                    stopConsumers();
                     break;
                 }
 
-                int threadsWithData = putData(readItems);
-                int threadIndex = 0;
-                int possibleThreadsToFinish = 0;
-                for (final SharedData<T> data : dataForThreads)
+                int consumersWithData = putDataToConsumers();
+                if (read < maxItemsToRead)
                 {
-                    if (threadIndex++ < threadsWithData)
+                    stopProducer();
+                }
+                else
+                {
+                    exchangeProducerData.orchestratorActions().startRead();
+                }
+
+                for (int consumerIndex = 0; consumerIndex < consumersWithData; consumerIndex++)
+                {
+                    final ConsumerData<T> data = exchangeConsumersData.get(consumerIndex);
+                    data.orchestratorActions().waitForProcessing();
+                    if (data.orchestratorActions().isError())
                     {
-                        data.producerActions().waitForProcessing();
-                        if (data.producerActions().isError())
-                        {
-                            isError = true;
-                        }
-                        if (isError) //Do rollback
-                        {
-                            data.producerActions().orderRollback();
-                        }
-                        else //Do commit
-                        {
-                            //Stop chunk if it's the last thread with data
-                            data.producerActions().orderCommit(threadIndex == threadsWithData);
-                            isError = data.producerActions().isError();
-                        }
-                        if (isError) //If the chunk is in error, finish the consumer
-                        {
-                            data.producerActions().finishConsumer();
-                        }
-                        else if (read < maxItemsToRead) //If in the next iteration there's no data, finish the consumer
-                        {
-                            data.producerActions().finishConsumer();
-                        }
-                        else
-                        {
-                            data.producerActions().nextIteration();
-                            possibleThreadsToFinish++;
-                        }
+                        isErrorInConsumers = true;
+                    }
+                    if (isErrorInConsumers) //Do rollback
+                    {
+                        data.orchestratorActions().doRollback();
+                        data.orchestratorActions().waitForResolution();
+                    }
+                    else //Do commit
+                    {
+                        //Stop chunk if it's the last thread with data
+                        final boolean isLastConsumerWithData = consumerIndex + 1 == consumersWithData;
+                        data.orchestratorActions().doCommit(isLastConsumerWithData);
+                        data.orchestratorActions().waitForResolution();
+                        isErrorInConsumers = data.orchestratorActions().isError();
+                    }
+                    if (isErrorInConsumers || (read < maxItemsToRead)) //If the chunk is in error or there's no data for next iteration, finish the consumer
+                    {
+                        data.orchestratorActions().finishConsumer();
                     }
                 }
 
-                if (isError)
+                if (isErrorInConsumers)
                 {
-                    for (int i = 0; i < possibleThreadsToFinish; i++)
-                    {
-                        dataForThreads.get(i).producerActions().finishConsumer();
-                    }
+                    stopProducer();
+                    stopConsumers();
                     break;
                 }
 
@@ -161,7 +164,11 @@ public class MultiChunkStep <T,K> extends CommonStep<MultiChunkStatus> implement
 
             closeResources();
 
-            if (isError)
+            if (isErrorInProducer)
+            {
+                status().stop(new MultiChunkException("The producer has failed"));
+            }
+            else if (isErrorInConsumers)
             {
                 status().stop(new MultiChunkException("One or more consumers have failed"));
             }
@@ -183,54 +190,63 @@ public class MultiChunkStep <T,K> extends CommonStep<MultiChunkStatus> implement
         {
             LOGGER.error("Error executing step [{}]", status().name(), t);
             status().stop(t);
-            stopThreads();
+            stopProducer();
+            stopConsumers();
             closeResources();
             status().saveProtected();
         }
     }
 
-    private int putData(List<T> items)
+    private int putDataToConsumers()
     {
-        final int size = items.size();
-        int globalIndex = 0;
-        int dataWithElementsCounter = 0;
-        for (final SharedData<T> data : dataForThreads)
+        int consumersWithDataCounter = 0;
+        for (int consumerIndex = 0; consumerIndex < consumers; consumerIndex++)
         {
-            data.producerActions().clearItems();
-            int localIndex = 0;
-            while (globalIndex < size && localIndex++ < commitInterval)
+            final ConsumerData<T> exchangeDataI = exchangeConsumersData.get(consumerIndex);
+            final List<T> dataForConsumerI = exchangeProducerData.orchestratorActions().data(consumerIndex);
+            if (dataForConsumerI.isEmpty())
             {
-                data.producerActions().addItem(items.get(globalIndex++));
-            }
-            if (data.producerActions().itemsSize() > 0)
-            {
-                dataWithElementsCounter++;
-                data.producerActions().dataReady();
+                exchangeDataI.orchestratorActions().finishConsumer();
             }
             else
             {
-                data.producerActions().finishConsumer();
+                consumersWithDataCounter++;
+                exchangeDataI.orchestratorActions().addItems(dataForConsumerI);
+                exchangeDataI.orchestratorActions().dataReady();
             }
         }
-        return dataWithElementsCounter;
+        return consumersWithDataCounter;
     }
 
-    private void stopThreads()
+    private void stopProducer()
     {
-        for (final SharedData<T> data : dataForThreads)
+        exchangeProducerData.orchestratorActions().finishProducer();
+    }
+
+    private void stopConsumers()
+    {
+        for (final ConsumerData<T> data : exchangeConsumersData)
         {
-            data.producerActions().finishConsumer();
+            data.orchestratorActions().finishConsumer();
         }
     }
 
-    private void startThreads()
+    private void startProducer()
     {
-        final Executor executor = ExecutorFactory.getInstance(threads, "consumer");
-        for (int i = 0; i < threads; i++)
+        final Executor executor = ExecutorFactory.getInstance(consumers, "producer");
+        exchangeProducerData = new ProducerData<>(status(), consumers, commitInterval, waitTimeout);
+        final MultiChunkProducer<T> producer = new MultiChunkProducer<>(reader, exchangeProducerData);
+        executor.execute(producer);
+    }
+
+    private void startConsumers()
+    {
+        final Executor executor = ExecutorFactory.getInstance(consumers, "consumer");
+        for (int i = 0; i < consumers; i++)
         {
-            dataForThreads.add(new SharedData<>(status(), i, commitInterval, timeoutForConsumers));
+            exchangeConsumersData.add(new ConsumerData<>(status(), i, commitInterval, waitTimeout));
             final MultiChunkConsumer<T,K> consumer = new MultiChunkConsumer<>(transactionManager(),
-                    processors.get(i), writers.get(i), dataForThreads.get(i));
+                    processors.get(i), writers.get(i), exchangeConsumersData.get(i));
             executor.execute(consumer);
         }
     }

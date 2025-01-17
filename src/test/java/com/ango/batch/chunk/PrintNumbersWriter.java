@@ -75,7 +75,7 @@ public class PrintNumbersWriter implements IWriter<String>
                 throw new RuntimeException("Error writing element [" + item + "]");
             }
 
-            LOGGER.info(item);
+            LOGGER.info("Writing number {}", item);
             //System.out.println(item);
         }
     }
