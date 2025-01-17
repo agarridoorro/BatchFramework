@@ -1,5 +1,6 @@
 package com.ango.batch.chunk.multi;
 
+import com.ango.batch.exceptions.HandShakeException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -10,9 +11,9 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-class SharedData<T>
+class ConsumerData<T>
 {
-    private static final Logger LOGGER = LoggerFactory.getLogger(SharedData.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(ConsumerData.class);
 
     private ConsumerPhase phase;
     private final CyclicBarrier barrier = new CyclicBarrier(2);
@@ -21,22 +22,22 @@ class SharedData<T>
     private final int index;
     private final List<T> items;
     private boolean doFinish;
-    private boolean doRollback;
+    private boolean doCommit;
     private final int waitSeconds;
-    private final ProducerActions producerActions;
+    private final OrchestratorActions orchestratorActions;
     private final ConsumerActions consumerActions;
     private boolean stopChunk = false;
 
-    public SharedData(MultiChunkStatus status, int index, int commitInterval, int waitSeconds)
+    public ConsumerData(MultiChunkStatus status, int index, int commitInterval, int waitSeconds)
     {
         this.status = status;
         this.index = index;
         this.phase = ConsumerPhase.WaitForData;
         this.doFinish = false;
-        this.doRollback = false;
+        this.doCommit = false;
         this.waitSeconds = waitSeconds;
         this.items = new ArrayList<>(commitInterval);
-        this.producerActions = new ProducerActions();
+        this.orchestratorActions = new OrchestratorActions();
         this.consumerActions = new ConsumerActions();
     }
 
@@ -63,14 +64,14 @@ class SharedData<T>
         {
             LOGGER.error("Exception in handshake {}", e.getClass());
             isError = true;
-            status.add(e);
+            status.add(new HandShakeException(e));
             return false;
         }
     }
 
-    public ProducerActions producerActions()
+    public OrchestratorActions orchestratorActions()
     {
-        return producerActions;
+        return orchestratorActions;
     }
 
     public ConsumerActions consumerActions()
@@ -78,63 +79,59 @@ class SharedData<T>
         return consumerActions;
     }
 
-    public class ProducerActions
+    public class OrchestratorActions
     {
-        private ProducerActions() { }
+        private OrchestratorActions() { }
 
-        public void clearItems() { items.clear(); }
-
-        public void addItem(T item) { items.add(item); };
-
-        public int itemsSize() { return items.size(); }
+        public void addItems(List<T> newItems)
+        {
+            items.clear();
+            items.addAll(newItems);
+        };
 
         public boolean isError() { return isError; }
 
-        public boolean dataReady()
+        public void dataReady()
         {
             if (LOGGER.isDebugEnabled()) LOGGER.debug("Data ready {}", index);
-            return handShakeForNextPhase();
+            handShakeForNextPhase();
         }
 
-        public boolean finishConsumer()
+        public void finishConsumer()
         {
-            if (LOGGER.isDebugEnabled()) LOGGER.debug("Finish consumer {}", index);
-            doFinish = true;
-            return handShakeForNextPhase();
+            if (!doFinish)
+            {
+                if (LOGGER.isDebugEnabled()) LOGGER.debug("Order consumer to Finish {}", index);
+                doFinish = true;
+                handShakeForNextPhase();
+            }
         }
 
-        public boolean waitForProcessing()
+        public void waitForProcessing()
         {
             if (LOGGER.isDebugEnabled()) LOGGER.debug("Wait for processing {}", index);
-            return handShakeForNextPhase();
+            handShakeForNextPhase();
         }
 
-        public boolean orderCommit(boolean doStopChunk)
+        public void doCommit(boolean doStopChunk)
         {
             if (LOGGER.isDebugEnabled()) LOGGER.debug("Order commit {}", index);
             stopChunk = doStopChunk;
-            if (handShakeForNextPhase()) //Order thread the commit
-            {
-                return handShakeForNextPhase(); //Wait for the commit
-            }
-            return false;
+            doCommit = true;
+            handShakeForNextPhase();
         }
 
-        public boolean orderRollback()
+        public void waitForResolution()
+        {
+            if (LOGGER.isDebugEnabled()) LOGGER.debug("Waiting for resolution {}", index);
+            handShakeForNextPhase();
+        }
+
+        public void doRollback()
         {
             if (LOGGER.isDebugEnabled()) LOGGER.debug("Order rollback {}", index);
-            doRollback = true;
-            if (handShakeForNextPhase()) //Order thread the rollback
-            {
-                return handShakeForNextPhase(); //Wait for the rollback
-            }
-            return false;
-        }
-
-        public boolean nextIteration()
-        {
-            if (LOGGER.isDebugEnabled()) LOGGER.debug("Next iteration {}", index);
-            return handShakeForNextPhase(); //Order thread the rollback
+            doCommit = false;
+            handShakeForNextPhase();
         }
     }
 
@@ -163,9 +160,7 @@ class SharedData<T>
             status.add(index, phase, t);
         }
 
-        public boolean doCommit() { return !doRollback; }
-
-        public boolean doRollback() { return doRollback; }
+        public boolean doCommit() { return doCommit; }
 
         public boolean stopChunk() { return stopChunk; }
 
@@ -175,28 +170,23 @@ class SharedData<T>
             return handShakeForNextPhase() && !doFinish;
         }
 
-        public boolean finishProcessing()
+        public void finishProcessing()
         {
             if (LOGGER.isDebugEnabled()) LOGGER.debug("Finish processing {}", index);
-            return handShakeForNextPhase();
+            handShakeForNextPhase();
         }
 
-        public boolean waitForDoingCommitOrRollback()
+        public void waitForDoingCommitOrRollback()
         {
             setPhase(ConsumerPhase.WaitForCommitOrRollback);
-            return handShakeForNextPhase() && !doFinish;
+            handShakeForNextPhase();
         }
 
-        public boolean finishResolution()
+        public void finishResolution()
         {
             if (LOGGER.isDebugEnabled()) LOGGER.debug("Finish resolution {}", index);
-            return handShakeForNextPhase();
-        }
-
-        public boolean waitForFinish()
-        {
-            setPhase(ConsumerPhase.WaitForFinish);
-            return handShakeForNextPhase() && !doFinish;
+            doCommit = false;
+            handShakeForNextPhase();
         }
     }
 }

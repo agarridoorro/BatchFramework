@@ -20,9 +20,9 @@ public interface IMultiChunkStepBuilder<T,K> extends IStepBuilder<IMultiChunkSte
 
     IMultiChunkStepBuilder<T,K> setCommitInterval(int size);
 
-    IMultiChunkStepBuilder<T,K> setThreads(int threads);
+    IMultiChunkStepBuilder<T,K> setConsumers(int consumers);
 
-    IMultiChunkStepBuilder<T,K> setTimeoutForConsumers(int timeout);
+    IMultiChunkStepBuilder<T,K> setWaitTimeout(int timeout);
 
     IMultiChunkStepBuilder<T,K> setTransactionManager(TransactionManager transactionManager);
 
@@ -35,8 +35,8 @@ public interface IMultiChunkStepBuilder<T,K> extends IStepBuilder<IMultiChunkSte
             private final List<IProcessor<T,K>> processors = new ArrayList<>();
             private final List<IWriter<K>> writers = new ArrayList<>();
             private int commitInterval = 1;
-            private int threads;
-            private int timeoutForConsumers;
+            private int consumers;
+            private int waitTimeout;
             private boolean throwExceptions = true;
             private TransactionManager transactionManager;
 
@@ -76,16 +76,16 @@ public interface IMultiChunkStepBuilder<T,K> extends IStepBuilder<IMultiChunkSte
             }
 
             @Override
-            public IMultiChunkStepBuilder<T, K> setThreads(int threads)
+            public IMultiChunkStepBuilder<T, K> setConsumers(int consumers)
             {
-                this.threads = threads;
+                this.consumers = consumers;
                 return this;
             }
 
             @Override
-            public IMultiChunkStepBuilder<T, K> setTimeoutForConsumers(int timeout)
+            public IMultiChunkStepBuilder<T, K> setWaitTimeout(int timeout)
             {
-                this.timeoutForConsumers = timeout;
+                this.waitTimeout = timeout;
                 return this;
             }
 
@@ -121,8 +121,8 @@ public interface IMultiChunkStepBuilder<T,K> extends IStepBuilder<IMultiChunkSte
                 step.setCommitInterval(commitInterval);
                 step.setThrowExceptions(throwExceptions);
                 step.setTransactionManager(null == transactionManager ? BatchTransactionManager.getInstance() : transactionManager);
-                step.setThreads(threads);
-                step.setTimeoutForConsumers(timeoutForConsumers);
+                step.setConsumers(consumers);
+                step.setWaitTimeout(waitTimeout);
                 return step;
             }
 
@@ -136,22 +136,22 @@ public interface IMultiChunkStepBuilder<T,K> extends IStepBuilder<IMultiChunkSte
                 {
                     throw new ValidationException("The reader cannot be null");
                 }
-                if (threads <= 0)
+                if (consumers <= 0)
                 {
                     throw new ValidationException("The threads must be positive");
                 }
-                if (writers.size() != threads)
+                if (writers.size() != consumers)
                 {
                     throw new ValidationException("The writers must be the same number as threads");
                 }
                 if (!processors.isEmpty())
                 {
-                    if (processors.size() != threads)
+                    if (processors.size() != consumers)
                     {
                         throw new ValidationException("The processors must be 0 or the same number as threads");
                     }
                 }
-                if (timeoutForConsumers < 0)
+                if (waitTimeout < 0)
                 {
                     throw new ValidationException("The timeout for consumers must be greater or equals to zero");
                 }

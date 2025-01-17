@@ -13,12 +13,12 @@ class MultiChunkConsumer<T,K> implements Runnable
     private static final Logger LOGGER = LoggerFactory.getLogger(MultiChunkConsumer.class);
 
     private final TransactionManager tm;
-    private final SharedData<T> data;
+    private final ConsumerData<T> data;
     private final ProcessorResource<T,K> processor;
     private final WriterResource<K> writer;
 
     public MultiChunkConsumer(TransactionManager tm, ProcessorResource<T, K> processor,
-                              WriterResource<K> writer, SharedData<T> data)
+                              WriterResource<K> writer, ConsumerData<T> data)
     {
         this.tm = tm;
         this.data = data;
@@ -29,13 +29,11 @@ class MultiChunkConsumer<T,K> implements Runnable
     @Override
     public void run()
     {
-        while (true)
+        ///***************************
+        ///     WAIT FOR DATA
+        ///***************************
+        while (data.consumerActions().waitForData())
         {
-            ///***************************
-            ///     WAIT FOR DATA
-            ///***************************
-            if (!data.consumerActions().waitForData()) break;
-
             ///***************************
             ///     PROCESS
             ///***************************
@@ -68,8 +66,6 @@ class MultiChunkConsumer<T,K> implements Runnable
                     {
                         LOGGER.error("Error in thread: [{}] phase: [{}]", data.consumerActions().index(), data.consumerActions().phase(), t);
                         data.consumerActions().add(t);
-                        tm.rollback();
-                        isTransactionPending = false;
                     }
                 }
             }
@@ -87,7 +83,7 @@ class MultiChunkConsumer<T,K> implements Runnable
             ///***************************
             ///     WAIT FOR COMMIT OR ROLLBACK
             ///***************************
-            if (!data.consumerActions().waitForDoingCommitOrRollback()) break;
+            data.consumerActions().waitForDoingCommitOrRollback();
 
             try
             {
@@ -120,7 +116,7 @@ class MultiChunkConsumer<T,K> implements Runnable
                 ///***************************
                 ///     DO ROLLBACK
                 ///***************************
-                else if (data.consumerActions().doRollback())
+                else
                 {
                     data.consumerActions().setPhase(ConsumerPhase.Rollback);
                     if (isTransactionPending)
@@ -153,11 +149,6 @@ class MultiChunkConsumer<T,K> implements Runnable
             ///     FINISH RESOLUTION
             ///***************************
             data.consumerActions().finishResolution();
-
-            ///***************************
-            ///     WAIT FOR FINISH
-            ///***************************
-            if (!data.consumerActions().waitForFinish()) break;
         }
 
         data.consumerActions().setPhase(ConsumerPhase.Finished);
